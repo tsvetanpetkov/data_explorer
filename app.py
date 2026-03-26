@@ -178,7 +178,10 @@ DATABASES = {
         "icon": "🚕",
         "description": "44M rides across NYC in 2025",
         "type": "duckdb_parquet",
-        "path": "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-*.parquet",
+        "path": [
+            f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{m:02d}.parquet"
+            for m in range(1, 13)
+        ],
         "color": "#f5c542",
     },
     "stocks": {
@@ -199,15 +202,23 @@ DATABASES = {
     },
 }
 
+def _parquet_expr(path):
+    """Return a DuckDB-ready read_parquet(...) argument for a path or list of paths."""
+    if isinstance(path, list):
+        files = ", ".join(f"'{p}'" for p in path)
+        return f"[{files}]"
+    return f"'{path}'"
+
 # ── Queries per database ──────────────────────────────────────────────────────
 def load_main_metric(db_key):
     db = DATABASES[db_key]
 
     if db_key == "nyc_taxi":
         con = duckdb.connect()
+        F = _parquet_expr(db["path"])
         df = con.execute(f"""
             SELECT tpep_pickup_datetime::DATE AS date, COUNT(*) AS trips
-            FROM read_parquet('{db["path"]}')
+            FROM read_parquet({F})
             WHERE tpep_pickup_datetime >= '2025-01-01' AND tpep_pickup_datetime < '2026-01-01'
             GROUP BY date ORDER BY date
         """).df()
@@ -244,18 +255,18 @@ def load_faq_data(db_key):
 
     if db_key == "nyc_taxi":
         con = duckdb.connect()
-        F = db["path"]
+        F = _parquet_expr(db["path"])
 
         busiest = con.execute(f"""
             SELECT tpep_pickup_datetime::DATE AS d, COUNT(*) AS n
-            FROM read_parquet('{F}') GROUP BY d ORDER BY n DESC LIMIT 1
+            FROM read_parquet({F}) GROUP BY d ORDER BY n DESC LIMIT 1
         """).df()
 
         payment = con.execute(f"""
             SELECT CASE payment_type WHEN 1 THEN 'Credit Card' WHEN 2 THEN 'Cash'
                    ELSE 'Other' END AS method,
                    COUNT(*) AS trips, ROUND(AVG(tip_amount),2) AS avg_tip
-            FROM read_parquet('{F}')
+            FROM read_parquet({F})
             WHERE payment_type IN (1,2)
             GROUP BY payment_type ORDER BY trips DESC
         """).df()
@@ -264,14 +275,14 @@ def load_faq_data(db_key):
             SELECT ROUND(AVG(total_amount),2) AS avg_fare,
                    ROUND(AVG(trip_distance),2) AS avg_miles,
                    COUNT(*) AS trips
-            FROM read_parquet('{F}')
+            FROM read_parquet({F})
             WHERE PULocationID IN (132,138) OR DOLocationID IN (132,138)
         """).df()
 
         peak_hour = con.execute(f"""
             SELECT EXTRACT(hour FROM tpep_pickup_datetime)::INT AS hour,
                    COUNT(*) AS trips
-            FROM read_parquet('{F}')
+            FROM read_parquet({F})
             GROUP BY hour ORDER BY trips DESC LIMIT 1
         """).df()
 
@@ -406,7 +417,7 @@ def load_faq_data(db_key):
 def get_schema_description(db_key):
     db = DATABASES[db_key]
     if db_key == "nyc_taxi":
-        return """Table: trips  (queried as read_parquet('/Users/tsvetanpetkov/nyc_taxi/parquet_files/yellow_tripdata_2025-*.parquet'))
+        return """Table: trips  (queried as read_parquet(['https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{01..12}.parquet']))
 Columns:
   VendorID             INTEGER   -- 1=Creative Mobile, 2=VeriFone
   tpep_pickup_datetime TIMESTAMP -- pickup timestamp
@@ -429,7 +440,7 @@ Columns:
   airport_fee          DOUBLE
   cbd_congestion_fee   DOUBLE
 Date range: 2025-01-01 to 2025-11-30. ~44M rows total.
-Engine: DuckDB. Use read_parquet('/Users/tsvetanpetkov/nyc_taxi/parquet_files/yellow_tripdata_2025-*.parquet') in FROM clause."""
+Engine: DuckDB. Use read_parquet(['https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{01..12}.parquet']) in FROM clause."""
 
     con = _sqlite_to_duckdb(db["path"])
     if db_key == "stocks":
