@@ -35,72 +35,72 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0f1117; }
+    .stApp { background-color: #000000; }
     h1 { color: #ffffff; font-size: 2rem !important; }
-    h2 { color: #e0e0e0; font-size: 1.3rem !important; }
-    h3 { color: #a0a0a0; font-size: 1rem !important; }
+    h2 { color: #cccccc; font-size: 1.3rem !important; }
+    h3 { color: #888888; font-size: 1rem !important; }
     .db-card {
-        background: #1a1d2e;
-        border: 1px solid #2a2d3e;
+        background: #111111;
+        border: 1px solid #333333;
         border-radius: 12px;
         padding: 24px;
         cursor: pointer;
         transition: border-color 0.2s;
         text-align: center;
     }
-    .db-card:hover { border-color: #5865f2; }
-    .db-card.selected { border-color: #5865f2; background: #1e2140; }
+    .db-card:hover { border-color: #ffffff; }
+    .db-card.selected { border-color: #ffffff; background: #1a1a1a; }
     .faq-item {
-        background: #1a1d2e;
-        border-left: 3px solid #5865f2;
+        background: #111111;
+        border-left: 3px solid #ffffff;
         border-radius: 0 8px 8px 0;
         padding: 16px 20px;
         margin: 10px 0;
     }
-    .faq-question { color: #a0b0ff; font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }
-    .faq-answer { color: #c0c0c0; font-size: 0.88rem; line-height: 1.5; }
+    .faq-question { color: #ffffff; font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }
+    .faq-answer { color: #aaaaaa; font-size: 0.88rem; line-height: 1.5; }
     .metric-box {
-        background: #1a1d2e;
+        background: #111111;
         border-radius: 10px;
         padding: 16px 20px;
         text-align: center;
     }
-    .metric-val { font-size: 1.6rem; font-weight: 700; color: #7b8fff; }
-    .metric-lbl { font-size: 0.78rem; color: #888; margin-top: 2px; }
+    .metric-val { font-size: 1.6rem; font-weight: 700; color: #ffffff; }
+    .metric-lbl { font-size: 0.78rem; color: #666666; margin-top: 2px; }
     .qa-box {
-        background: #1a1d2e;
-        border: 1px solid #2a2d3e;
+        background: #111111;
+        border: 1px solid #333333;
         border-radius: 12px;
         padding: 20px 24px;
         margin-top: 8px;
     }
     .msg-user {
-        background: #1e2140;
+        background: #1a1a1a;
         border-radius: 10px 10px 2px 10px;
         padding: 10px 14px;
         margin: 8px 0 4px auto;
         max-width: 75%;
-        color: #e0e0e0;
+        color: #eeeeee;
         font-size: 0.92rem;
     }
     .msg-assistant {
-        background: #12151f;
+        background: #0a0a0a;
         border-radius: 2px 10px 10px 10px;
         padding: 10px 14px;
         margin: 4px auto 8px 0;
         max-width: 90%;
-        color: #c8d0e0;
+        color: #cccccc;
         font-size: 0.92rem;
         line-height: 1.6;
     }
     .sql-block {
-        background: #0a0c12;
-        border: 1px solid #2a2d3e;
+        background: #000000;
+        border: 1px solid #333333;
         border-radius: 6px;
         padding: 10px 14px;
         font-family: monospace;
         font-size: 0.82rem;
-        color: #7b8fff;
+        color: #ffffff;
         margin: 6px 0;
         white-space: pre-wrap;
         word-break: break-all;
@@ -163,7 +163,7 @@ def render_result_map(cfg, df, color):
         size_max=40,
     )
     fig.update_layout(
-        paper_bgcolor="#0f1117",
+        paper_bgcolor="#000000",
         margin=dict(l=0, r=0, t=0, b=0),
         height=520,
         coloraxis_colorbar=dict(title=color_col or ""),
@@ -179,7 +179,7 @@ DATABASES = {
         "description": "500K rides from NYC Jan 2025",
         "type": "duckdb_parquet",
         "path": str(HOME / "taxi_sample.parquet"),
-        "color": "#f5c542",
+        "color": "#ffffff",
     },
     "stocks": {
         "label": "Stock Prices",
@@ -187,7 +187,7 @@ DATABASES = {
         "description": "Daily OHLCV data for major tickers",
         "type": "duckdb",
         "path": str(HOME / "test.db"),
-        "color": "#42f5a7",
+        "color": "#aaaaaa",
     },
     "ecommerce": {
         "label": "E-Commerce Clickstream",
@@ -195,7 +195,7 @@ DATABASES = {
         "description": "165K online shopping sessions",
         "type": "duckdb",
         "path": str(HOME / "test.db"),
-        "color": "#f542a7",
+        "color": "#666666",
     },
 }
 
@@ -576,7 +576,7 @@ with st.sidebar:
     st.markdown("**Q&A** uses Claude to convert your question to SQL, runs it, and shows the results.")
 
 st.markdown("## 📊 Data Explorer")
-st.markdown("<p style='color:#888;margin-top:-12px'>Select a dataset to explore</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#666666;margin-top:-12px'>Select a dataset to explore</p>", unsafe_allow_html=True)
 
 # Database selector
 if "selected_db" not in st.session_state:
@@ -586,8 +586,8 @@ cols = st.columns(len(DATABASES))
 for col, (key, db) in zip(cols, DATABASES.items()):
     with col:
         selected = st.session_state.selected_db == key
-        border = "#5865f2" if selected else "#2a2d3e"
-        bg = "#1e2140" if selected else "#1a1d2e"
+        border = "#ffffff" if selected else "#333333"
+        bg = "#1a1a1a" if selected else "#111111"
         if st.button(
             f"{db['icon']}  {db['label']}\n\n_{db['description']}_",
             key=f"btn_{key}",
@@ -632,7 +632,7 @@ if st.session_state.selected_db:
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["value"],
             mode="lines", name="Daily trips",
-            line=dict(color="#888", width=1),
+            line=dict(color="#444444", width=1),
             opacity=0.5
         ))
         fig.add_trace(go.Scatter(
@@ -708,7 +708,7 @@ if st.session_state.selected_db:
                 elif len(df_r.columns) == 2 and pd.api.types.is_numeric_dtype(df_r.iloc[:, 1]):
                     fig = px.bar(df_r, x=df_r.columns[0], y=df_r.columns[1],
                                  template="plotly_dark", color_discrete_sequence=[db["color"]])
-                    fig.update_layout(paper_bgcolor="#0f1117", plot_bgcolor="#0f1117",
+                    fig.update_layout(paper_bgcolor="#000000", plot_bgcolor="#000000",
                                       margin=dict(l=0,r=0,t=30,b=0), height=280)
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -780,7 +780,7 @@ if st.session_state.selected_db:
                 elif len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
                     fig = px.bar(result_df, x=result_df.columns[0], y=result_df.columns[1],
                                  template="plotly_dark", color_discrete_sequence=[db["color"]])
-                    fig.update_layout(paper_bgcolor="#0f1117", plot_bgcolor="#0f1117",
+                    fig.update_layout(paper_bgcolor="#000000", plot_bgcolor="#000000",
                                       margin=dict(l=0,r=0,t=30,b=0), height=280)
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -829,4 +829,4 @@ if st.session_state.selected_db:
 
 else:
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#555;text-align:center;font-size:1.1rem'>👆 Select a dataset above to get started</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#555555;text-align:center;font-size:1.1rem'>👆 Select a dataset above to get started</p>", unsafe_allow_html=True)
