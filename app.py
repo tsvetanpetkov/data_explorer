@@ -558,19 +558,20 @@ DATABASE SCHEMA:
 # ── UI ────────────────────────────────────────────────────────────────────────
 # ── Sidebar: API key ──────────────────────────────────────────────────────────
 import os
+_env_key = os.environ.get("ANTHROPIC_API_KEY", "")
 with st.sidebar:
-    st.markdown("### 🔑 Claude API Key")
-    api_key_input = st.text_input(
-        "Anthropic API key",
-        value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password",
-        placeholder="sk-ant-...",
-        label_visibility="collapsed",
-    )
-    if api_key_input:
-        st.success("Key set ✓")
+    if _env_key:
+        api_key_input = _env_key
     else:
-        st.warning("Enter key to enable Q&A")
+        st.markdown("### 🔑 Claude API Key")
+        api_key_input = st.text_input(
+            "Anthropic API key",
+            type="password",
+            placeholder="sk-ant-...",
+            label_visibility="collapsed",
+        )
+        if not api_key_input:
+            st.warning("Enter key to enable Q&A")
     st.markdown("---")
     st.markdown("**Q&A** uses Claude to convert your question to SQL, runs it, and shows the results.")
 
