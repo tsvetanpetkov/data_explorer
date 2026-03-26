@@ -176,12 +176,9 @@ DATABASES = {
     "nyc_taxi": {
         "label": "NYC Yellow Taxi",
         "icon": "🚕",
-        "description": "44M rides across NYC in 2025",
+        "description": "500K rides from NYC Jan 2025",
         "type": "duckdb_parquet",
-        "path": [
-            f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{m:02d}.parquet"
-            for m in range(1, 13)
-        ],
+        "path": str(HOME / "taxi_sample.parquet"),
         "color": "#f5c542",
     },
     "stocks": {
@@ -417,7 +414,7 @@ def load_faq_data(db_key):
 def get_schema_description(db_key):
     db = DATABASES[db_key]
     if db_key == "nyc_taxi":
-        return """Table: trips  (queried as read_parquet(['https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{01..12}.parquet']))
+        return """Table: trips  (queried as read_parquet('taxi_sample.parquet'))
 Columns:
   VendorID             INTEGER   -- 1=Creative Mobile, 2=VeriFone
   tpep_pickup_datetime TIMESTAMP -- pickup timestamp
@@ -439,8 +436,8 @@ Columns:
   congestion_surcharge DOUBLE
   airport_fee          DOUBLE
   cbd_congestion_fee   DOUBLE
-Date range: 2025-01-01 to 2025-11-30. ~44M rows total.
-Engine: DuckDB. Use read_parquet(['https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-{01..12}.parquet']) in FROM clause."""
+Date range: 2025-01-01 to 2025-01-31. ~500K rows total.
+Engine: DuckDB. Use read_parquet('taxi_sample.parquet') in FROM clause."""
 
     con = _sqlite_to_duckdb(db["path"])
     if db_key == "stocks":
