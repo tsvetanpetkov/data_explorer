@@ -1,0 +1,8 @@
+{
+  "nyc_taxi": [
+    {
+      "q": "what is the most common route?",
+      "a": "This query finds the most common pickup-dropoff zone pairs (routes) by counting the number of trips for each combination. The top 20 routes are returned, ordered by frequency. The most common route will be the first row in the results.  Top results (20 rows total): PULocationID: 237 | DOLocationID: 236 | trip_count: 272923; PULocationID: 236 | DOLocationID: 237 | trip_count: 233369; PULocationID: 237 | DOLocationID: 237 | trip_count: 194366; PULocationID: 236 | DOLocationID: 236 | trip_count: 177791; PULocationID: 161 | DOLocationID: 237 | trip_count: 132001"
+    }
+  ]
+}
