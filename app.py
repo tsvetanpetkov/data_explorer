@@ -123,118 +123,133 @@ def load_zone_centroids():
         return None
 
 
+def _col(df, name, fallback_idx=0):
+    """Return name if it exists as a column, else df.columns[fallback_idx]."""
+    return name if name in df.columns else df.columns[min(fallback_idx, len(df.columns) - 1)]
+
+
 def render_result_chart(cfg, df, color):
     """Render a chart from a chartconfig dict + result DataFrame."""
-    chart_type = cfg.get("type", "bar")
-    title = cfg.get("title", "")
-    layout_kwargs = dict(
-        paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-        margin=dict(l=0, r=0, t=30, b=0), height=320,
-        template="plotly_dark",
-        yaxis=dict(showgrid=False),
-    )
+    try:
+        chart_type = cfg.get("type", "bar")
+        title = cfg.get("title", "")
+        layout_kwargs = dict(
+            paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
+            margin=dict(l=0, r=0, t=30, b=0), height=320,
+            template="plotly_dark",
+            yaxis=dict(showgrid=False),
+        )
 
-    if chart_type == "histogram":
-        x = cfg.get("x", df.columns[0])
-        fig = px.histogram(df, x=x, title=title, color_discrete_sequence=[color])
-    elif chart_type == "line":
-        x = cfg.get("x", df.columns[0])
-        y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-        y_cols = y if isinstance(y, list) else [y]
-        fig = px.line(df, x=x, y=y_cols, title=title, color_discrete_sequence=px.colors.qualitative.Bold)
-    elif chart_type == "pie":
-        names = cfg.get("names", df.columns[0])
-        values = cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-        fig = px.pie(df, names=names, values=values, title=title,
-                     color_discrete_sequence=px.colors.qualitative.Bold)
-        layout_kwargs.pop("yaxis")
-    elif chart_type == "candlestick":
-        date_col  = cfg.get("x", "trade_date")
-        open_col  = cfg.get("open", "open")
-        high_col  = cfg.get("high", "high")
-        low_col   = cfg.get("low", "low")
-        close_col = cfg.get("close", "close")
-        fig = go.Figure(go.Candlestick(
-            x=df[date_col], open=df[open_col], high=df[high_col],
-            low=df[low_col], close=df[close_col],
-        ))
-        if title:
-            fig.update_layout(title=title)
-    else:  # bar (default)
-        x = cfg.get("x", df.columns[0])
-        y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-        fig = px.bar(df, x=x, y=y, title=title, color_discrete_sequence=[color])
+        if chart_type == "histogram":
+            x = _col(df, cfg.get("x", df.columns[0]))
+            fig = px.histogram(df, x=x, title=title, color_discrete_sequence=[color])
+        elif chart_type == "line":
+            x = _col(df, cfg.get("x", df.columns[0]))
+            y_raw = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+            y_cols = [_col(df, c, 1) for c in (y_raw if isinstance(y_raw, list) else [y_raw])]
+            fig = px.line(df, x=x, y=y_cols, title=title, color_discrete_sequence=px.colors.qualitative.Bold)
+        elif chart_type == "pie":
+            names = _col(df, cfg.get("names", df.columns[0]))
+            values = _col(df, cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0]), 1)
+            fig = px.pie(df, names=names, values=values, title=title,
+                         color_discrete_sequence=px.colors.qualitative.Bold)
+            layout_kwargs.pop("yaxis")
+        elif chart_type == "candlestick":
+            xc = _col(df, cfg.get("x", "trade_date"))
+            oc = _col(df, cfg.get("open", "open"), 1)
+            hc = _col(df, cfg.get("high", "high"), 2)
+            lc = _col(df, cfg.get("low", "low"), 3)
+            cc = _col(df, cfg.get("close", "close"), 4)
+            fig = go.Figure(go.Candlestick(x=df[xc], open=df[oc], high=df[hc], low=df[lc], close=df[cc]))
+            layout_kwargs["xaxis_rangeslider_visible"] = False
+            if title:
+                layout_kwargs["title"] = title
+        else:  # bar (default)
+            x = _col(df, cfg.get("x", df.columns[0]))
+            y = _col(df, cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0]), 1)
+            fig = px.bar(df, x=x, y=y, title=title, color_discrete_sequence=[color])
 
-    fig.update_layout(**layout_kwargs)
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(**layout_kwargs)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Could not render {cfg.get('type','bar')} chart: {e}")
 
 
 def render_charts_faceted(cfgs, df, color):
     """Render all charts as a faceted subplot grid."""
-    n = len(cfgs)
-    ncols = min(2, n)
-    nrows = (n + ncols - 1) // ncols
+    try:
+        n = len(cfgs)
+        ncols = min(2, n)
+        nrows = (n + ncols - 1) // ncols
+        bold = px.colors.qualitative.Bold
 
-    specs, subplot_titles = [], []
-    for i in range(nrows):
-        row_specs = []
-        for j in range(ncols):
-            idx = i * ncols + j
-            if idx < n:
-                t = cfgs[idx].get("type", "bar")
+        specs = []
+        titles = []
+        for i in range(nrows):
+            row_specs = []
+            for j in range(ncols):
+                idx = i * ncols + j
+                t = cfgs[idx].get("type", "bar") if idx < n else "bar"
                 row_specs.append({"type": "pie"} if t == "pie" else {"type": "xy"})
-                subplot_titles.append(cfgs[idx].get("title", ""))
-            else:
-                row_specs.append({"type": "xy"})
-                subplot_titles.append("")
-        specs.append(row_specs)
+                titles.append(cfgs[idx].get("title", "") if idx < n else "")
+            specs.append(row_specs)
 
-    fig = make_subplots(rows=nrows, cols=ncols, specs=specs, subplot_titles=subplot_titles)
-    bold = px.colors.qualitative.Bold
+        # only pass subplot_titles if at least one is non-empty
+        kw = {"subplot_titles": titles} if any(titles) else {}
+        fig = make_subplots(rows=nrows, cols=ncols, specs=specs, **kw)
 
-    for i, cfg in enumerate(cfgs):
-        row, col = i // ncols + 1, i % ncols + 1
-        t = cfg.get("type", "bar")
+        for i, cfg in enumerate(cfgs):
+            row, col = i // ncols + 1, i % ncols + 1
+            t = cfg.get("type", "bar")
+            try:
+                if t == "bar":
+                    xc = _col(df, cfg.get("x", df.columns[0]))
+                    yc = _col(df, cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0]), 1)
+                    fig.add_trace(go.Bar(x=df[xc], y=df[yc], marker_color=color, showlegend=False), row=row, col=col)
+                elif t == "line":
+                    xc = _col(df, cfg.get("x", df.columns[0]))
+                    y_raw = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+                    y_cols = [_col(df, c, 1) for c in (y_raw if isinstance(y_raw, list) else [y_raw])]
+                    for k, yc in enumerate(y_cols):
+                        fig.add_trace(go.Scatter(x=df[xc], y=df[yc], mode="lines", name=yc,
+                                                 line=dict(color=bold[k % len(bold)]),
+                                                 showlegend=len(y_cols) > 1), row=row, col=col)
+                elif t == "histogram":
+                    xc = _col(df, cfg.get("x", df.columns[0]))
+                    fig.add_trace(go.Histogram(x=df[xc], marker_color=color, showlegend=False), row=row, col=col)
+                elif t == "pie":
+                    nc = _col(df, cfg.get("names", df.columns[0]))
+                    vc = _col(df, cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0]), 1)
+                    fig.add_trace(go.Pie(labels=df[nc], values=df[vc], showlegend=False), row=row, col=col)
+                elif t == "candlestick":
+                    xc = _col(df, cfg.get("x", "trade_date"))
+                    oc = _col(df, cfg.get("open", "open"), 1)
+                    hc = _col(df, cfg.get("high", "high"), 2)
+                    lc = _col(df, cfg.get("low", "low"), 3)
+                    cc = _col(df, cfg.get("close", "close"), 4)
+                    fig.add_trace(go.Candlestick(x=df[xc], open=df[oc], high=df[hc],
+                                                  low=df[lc], close=df[cc], showlegend=False),
+                                  row=row, col=col)
+            except Exception as e:
+                st.warning(f"Could not render {t} chart in faceted view: {e}")
 
-        if t == "bar":
-            xc = cfg.get("x", df.columns[0])
-            yc = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-            fig.add_trace(go.Bar(x=df[xc], y=df[yc], marker_color=color, showlegend=False), row=row, col=col)
-        elif t == "line":
-            xc = cfg.get("x", df.columns[0])
-            y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-            y_cols = y if isinstance(y, list) else [y]
-            for k, yc in enumerate(y_cols):
-                fig.add_trace(go.Scatter(x=df[xc], y=df[yc], mode="lines", name=yc,
-                                         line=dict(color=bold[k % len(bold)]),
-                                         showlegend=len(y_cols) > 1), row=row, col=col)
-        elif t == "histogram":
-            xc = cfg.get("x", df.columns[0])
-            fig.add_trace(go.Histogram(x=df[xc], marker_color=color, showlegend=False), row=row, col=col)
-        elif t == "pie":
-            nc = cfg.get("names", df.columns[0])
-            vc = cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0])
-            fig.add_trace(go.Pie(labels=df[nc], values=df[vc]), row=row, col=col)
-        elif t == "candlestick":
-            xc = cfg.get("x", "trade_date")
-            fig.add_trace(go.Candlestick(
-                x=df[xc], open=df[cfg.get("open", "open")], high=df[cfg.get("high", "high")],
-                low=df[cfg.get("low", "low")], close=df[cfg.get("close", "close")],
-                showlegend=False,
-            ), row=row, col=col)
-
-    fig.update_yaxes(showgrid=False)
-    fig.update_layout(
-        paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-        template="plotly_dark",
-        margin=dict(l=0, r=0, t=40, b=0),
-        height=320 * nrows,
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_xaxes(rangeslider_visible=False)
+        fig.update_yaxes(showgrid=False)
+        fig.update_layout(
+            paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
+            template="plotly_dark",
+            margin=dict(l=0, r=0, t=40, b=0),
+            height=320 * nrows,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Could not render faceted chart: {e}")
+        for cfg in cfgs:
+            render_result_chart(cfg, df, color)
 
 
 def render_charts(cfgs, df, color, view_key):
-    """Render one or more charts with an Individual / Faceted toggle when >1."""
+    """Render one or more charts; show Individual/Faceted toggle when >1."""
     if not cfgs:
         return
     if len(cfgs) == 1:
@@ -631,13 +646,13 @@ When the user asks a question, you MUST:
 3. After the fence, give a concise 1-3 sentence explanation of what the query does / what to expect.
 Keep queries efficient and add LIMIT 500 unless the user asks for everything.
 
-CHARTS: After your explanation, include one or more ```chartconfig ... ``` blocks (one per chart) describing how to visualise the result. You may include multiple chartconfig blocks when different views of the same data are genuinely useful (e.g. a bar chart of totals AND a line chart of the trend). Each block contains a JSON object. Choose the most appropriate chart type(s):
+CHARTS: After your explanation, include one or more ```chartconfig ... ``` blocks (one per chart). You may include multiple when different views genuinely add value (e.g. a bar chart of totals AND a line chart of the trend). Each block is a JSON object. Use exact column names from the SQL result. Supported types:
 - "bar"          → {{\"type\":\"bar\",\"x\":\"col\",\"y\":\"col\",\"title\":\"...\"}}
 - "line"         → {{\"type\":\"line\",\"x\":\"col\",\"y\":\"col_or_list\",\"title\":\"...\"}}
 - "histogram"    → {{\"type\":\"histogram\",\"x\":\"col\",\"title\":\"...\"}}
 - "pie"          → {{\"type\":\"pie\",\"names\":\"col\",\"values\":\"col\",\"title\":\"...\"}}
 - "candlestick"  → {{\"type\":\"candlestick\",\"x\":\"date_col\",\"open\":\"open\",\"high\":\"high\",\"low\":\"low\",\"close\":\"close\",\"title\":\"...\"}}
-Guidelines: use candlestick for OHLC stock data; pie for distributions ≤10 categories; histogram for single numeric columns; line for time series; bar otherwise. Include multiple blocks only when each adds a distinct perspective.
+Guidelines: candlestick for OHLC data; pie for distributions ≤10 categories; histogram for single numeric columns; line for time series; bar otherwise.
 Always include at least one chartconfig block unless the result is a single scalar value.
 
 MAPS: If the user asks for a map, or if the result contains geographic data, include a ```mapconfig ... ``` block after your explanation with a JSON object. Supported types:
