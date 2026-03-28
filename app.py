@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from pathlib import Path
 import anthropic
 import json
@@ -166,6 +167,86 @@ def render_result_chart(cfg, df, color):
 
     fig.update_layout(**layout_kwargs)
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_charts_faceted(cfgs, df, color):
+    """Render all charts as a faceted subplot grid."""
+    n = len(cfgs)
+    ncols = min(2, n)
+    nrows = (n + ncols - 1) // ncols
+
+    specs, subplot_titles = [], []
+    for i in range(nrows):
+        row_specs = []
+        for j in range(ncols):
+            idx = i * ncols + j
+            if idx < n:
+                t = cfgs[idx].get("type", "bar")
+                row_specs.append({"type": "pie"} if t == "pie" else {"type": "xy"})
+                subplot_titles.append(cfgs[idx].get("title", ""))
+            else:
+                row_specs.append({"type": "xy"})
+                subplot_titles.append("")
+        specs.append(row_specs)
+
+    fig = make_subplots(rows=nrows, cols=ncols, specs=specs, subplot_titles=subplot_titles)
+    bold = px.colors.qualitative.Bold
+
+    for i, cfg in enumerate(cfgs):
+        row, col = i // ncols + 1, i % ncols + 1
+        t = cfg.get("type", "bar")
+
+        if t == "bar":
+            xc = cfg.get("x", df.columns[0])
+            yc = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+            fig.add_trace(go.Bar(x=df[xc], y=df[yc], marker_color=color, showlegend=False), row=row, col=col)
+        elif t == "line":
+            xc = cfg.get("x", df.columns[0])
+            y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+            y_cols = y if isinstance(y, list) else [y]
+            for k, yc in enumerate(y_cols):
+                fig.add_trace(go.Scatter(x=df[xc], y=df[yc], mode="lines", name=yc,
+                                         line=dict(color=bold[k % len(bold)]),
+                                         showlegend=len(y_cols) > 1), row=row, col=col)
+        elif t == "histogram":
+            xc = cfg.get("x", df.columns[0])
+            fig.add_trace(go.Histogram(x=df[xc], marker_color=color, showlegend=False), row=row, col=col)
+        elif t == "pie":
+            nc = cfg.get("names", df.columns[0])
+            vc = cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+            fig.add_trace(go.Pie(labels=df[nc], values=df[vc]), row=row, col=col)
+        elif t == "candlestick":
+            xc = cfg.get("x", "trade_date")
+            fig.add_trace(go.Candlestick(
+                x=df[xc], open=df[cfg.get("open", "open")], high=df[cfg.get("high", "high")],
+                low=df[cfg.get("low", "low")], close=df[cfg.get("close", "close")],
+                showlegend=False,
+            ), row=row, col=col)
+
+    fig.update_yaxes(showgrid=False)
+    fig.update_layout(
+        paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=320 * nrows,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_charts(cfgs, df, color, view_key):
+    """Render one or more charts with an Individual / Faceted toggle when >1."""
+    if not cfgs:
+        return
+    if len(cfgs) == 1:
+        render_result_chart(cfgs[0], df, color)
+        return
+    mode = st.radio("Chart view", ["Individual", "Faceted"], horizontal=True,
+                    key=view_key, label_visibility="collapsed")
+    if mode == "Faceted":
+        render_charts_faceted(cfgs, df, color)
+    else:
+        for cfg in cfgs:
+            render_result_chart(cfg, df, color)
 
 
 def render_result_map(cfg, df, color):
@@ -550,14 +631,14 @@ When the user asks a question, you MUST:
 3. After the fence, give a concise 1-3 sentence explanation of what the query does / what to expect.
 Keep queries efficient and add LIMIT 500 unless the user asks for everything.
 
-CHARTS: After your explanation, include a ```chartconfig ... ``` block with a JSON object describing how to visualise the result. Choose the most appropriate chart type:
+CHARTS: After your explanation, include one or more ```chartconfig ... ``` blocks (one per chart) describing how to visualise the result. You may include multiple chartconfig blocks when different views of the same data are genuinely useful (e.g. a bar chart of totals AND a line chart of the trend). Each block contains a JSON object. Choose the most appropriate chart type(s):
 - "bar"          → {{\"type\":\"bar\",\"x\":\"col\",\"y\":\"col\",\"title\":\"...\"}}
 - "line"         → {{\"type\":\"line\",\"x\":\"col\",\"y\":\"col_or_list\",\"title\":\"...\"}}
 - "histogram"    → {{\"type\":\"histogram\",\"x\":\"col\",\"title\":\"...\"}}
 - "pie"          → {{\"type\":\"pie\",\"names\":\"col\",\"values\":\"col\",\"title\":\"...\"}}
 - "candlestick"  → {{\"type\":\"candlestick\",\"x\":\"date_col\",\"open\":\"open\",\"high\":\"high\",\"low\":\"low\",\"close\":\"close\",\"title\":\"...\"}}
-Guidelines: use candlestick for OHLC stock data; pie for distributions ≤10 categories; histogram for single numeric columns; line for time series; bar otherwise.
-Always include a chartconfig block unless the result is a single scalar value.
+Guidelines: use candlestick for OHLC stock data; pie for distributions ≤10 categories; histogram for single numeric columns; line for time series; bar otherwise. Include multiple blocks only when each adds a distinct perspective.
+Always include at least one chartconfig block unless the result is a single scalar value.
 
 MAPS: If the user asks for a map, or if the result contains geographic data, include a ```mapconfig ... ``` block after your explanation with a JSON object. Supported types:
 - "zone_scatter": for NYC taxi zone IDs → automatically joined to lat/lon centroids.
@@ -600,13 +681,15 @@ DATABASE SCHEMA:
         except Exception as e:
             yield ("error", str(e))
 
-    # Extract optional chart config block
-    chart_match = re.search(r"```chartconfig\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE)
-    if chart_match:
+    # Extract all chart config blocks
+    chart_cfgs = []
+    for m in re.findall(r"```chartconfig\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE):
         try:
-            yield ("chart_config", json.loads(chart_match.group(1).strip()))
+            chart_cfgs.append(json.loads(m.strip()))
         except json.JSONDecodeError:
             pass
+    if chart_cfgs:
+        yield ("chart_configs", chart_cfgs)
 
     # Extract optional map config block
     map_match = re.search(r"```mapconfig\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE)
@@ -760,7 +843,7 @@ if st.session_state.selected_db:
         st.session_state[dyn_faq_key] = _load_persisted_faqs().get(key, [])
 
     # Render existing conversation
-    for turn in st.session_state[history_key]:
+    for t_idx, turn in enumerate(st.session_state[history_key]):
         if turn["role"] == "user":
             st.markdown(f'<div class="msg-user">🧑 {turn["content"]}</div>', unsafe_allow_html=True)
         else:
@@ -772,8 +855,8 @@ if st.session_state.selected_db:
                 st.dataframe(df_r, use_container_width=True, height=min(300, 40 + 35 * len(df_r)))
                 if turn.get("map_cfg"):
                     render_result_map(turn["map_cfg"], df_r, db["color"])
-                if turn.get("chart_cfg"):
-                    render_result_chart(turn["chart_cfg"], df_r, db["color"])
+                if turn.get("chart_cfgs"):
+                    render_charts(turn["chart_cfgs"], df_r, db["color"], f"chart_view_{key}_{t_idx}")
                 elif not turn.get("map_cfg") and len(df_r.columns) == 2 and pd.api.types.is_numeric_dtype(df_r.iloc[:, 1]):
                     render_result_chart({"type": "bar", "x": df_r.columns[0], "y": df_r.columns[1]}, df_r, db["color"])
 
@@ -803,7 +886,7 @@ if st.session_state.selected_db:
             result_df = None
             error_msg = None
             map_cfg = None
-            chart_cfg = None
+            chart_cfgs = []
 
             def _clean(text):
                 """Strip sql, chartconfig, and mapconfig fences from display text."""
@@ -828,8 +911,8 @@ if st.session_state.selected_db:
                         st.markdown(f'<div class="sql-block">{final_sql}</div>', unsafe_allow_html=True)
                     elif event_type == "df":
                         result_df = content
-                    elif event_type == "chart_config":
-                        chart_cfg = content
+                    elif event_type == "chart_configs":
+                        chart_cfgs = content
                     elif event_type == "map_config":
                         map_cfg = content
                     elif event_type == "error":
@@ -846,8 +929,8 @@ if st.session_state.selected_db:
                              height=min(300, 40 + 35 * len(result_df)))
                 if map_cfg:
                     render_result_map(map_cfg, result_df, db["color"])
-                if chart_cfg:
-                    render_result_chart(chart_cfg, result_df, db["color"])
+                if chart_cfgs:
+                    render_charts(chart_cfgs, result_df, db["color"], f"chart_view_{key}_new")
                 elif not map_cfg and len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
                     render_result_chart({"type": "bar", "x": result_df.columns[0], "y": result_df.columns[1]}, result_df, db["color"])
 
@@ -879,7 +962,7 @@ if st.session_state.selected_db:
                 "sql": final_sql,
                 "df": result_df,
                 "map_cfg": map_cfg,
-                "chart_cfg": chart_cfg,
+                "chart_cfgs": chart_cfgs,
             })
 
     # ── FAQ ───────────────────────────────────────────────────────────────────
