@@ -633,7 +633,7 @@ if st.session_state.selected_db:
             x=df["date"], y=df["value"],
             mode="lines", name="Daily trips",
             line=dict(color="#3a3a3a", width=10),
-            opacity=0.5
+            opacity=5
         ))
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["rolling"],
