@@ -349,6 +349,29 @@ def _parquet_expr(path):
         return f"[{files}]"
     return f"'{path}'"
 
+# ── Histogram column definitions ─────────────────────────────────────────────
+HIST_COLS = {
+    "nyc_taxi": [
+        ("fare_amount",   "Fare Amount ($)"),
+        ("trip_distance", "Trip Distance (mi)"),
+        ("tip_amount",    "Tip Amount ($)"),
+        ("total_amount",  "Total Amount ($)"),
+        ("passenger_count", "Passenger Count"),
+    ],
+    "stocks": [
+        ("open",   "Open Price"),
+        ("high",   "High Price"),
+        ("low",    "Low Price"),
+        ("close",  "Close Price"),
+        ("volume", "Volume"),
+    ],
+    "ecommerce": [
+        ("price",  "Item Price"),
+        ("price2", "Alt Price"),
+        ("page",   "Page Number"),
+    ],
+}
+
 # ── Queries per database ──────────────────────────────────────────────────────
 def load_main_metric(db_key):
     db = DATABASES[db_key]
@@ -388,6 +411,21 @@ def load_main_metric(db_key):
             GROUP BY date ORDER BY date
         """).df()
         return df, "Sessions per Day", "Sessions"
+
+
+@st.cache_data
+def load_histogram_data(db_key):
+    """Load full (unlimited) data for histogram columns."""
+    db = DATABASES[db_key]
+    cols = ", ".join(c for c, _ in HIST_COLS[db_key])
+    if db_key == "nyc_taxi":
+        con = duckdb.connect()
+        F = _parquet_expr(db["path"])
+        return con.execute(f"SELECT {cols} FROM read_parquet({F})").df()
+    else:
+        con = _sqlite_to_duckdb(db["path"])
+        table = "stock_prices" if db_key == "stocks" else "ecommerce_clickstream"
+        return con.execute(f"SELECT {cols} FROM {table}").df()
 
 
 def load_faq_data(db_key):
@@ -844,6 +882,39 @@ if st.session_state.selected_db:
         m1.markdown(f'<div class="metric-box"><div class="metric-val">{total_sess:,}</div><div class="metric-lbl">Total sessions</div></div>', unsafe_allow_html=True)
         m2.markdown(f'<div class="metric-box"><div class="metric-val">{total_pv:,}</div><div class="metric-lbl">Total page views</div></div>', unsafe_allow_html=True)
         m3.markdown(f'<div class="metric-box"><div class="metric-val">${avg_price:.2f}</div><div class="metric-lbl">Avg item price</div></div>', unsafe_allow_html=True)
+
+    # ── Distribution Histograms ────────────────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    hist_key = f"hist_shown_{key}"
+    if hist_key not in st.session_state:
+        st.session_state[hist_key] = False
+    if st.button("📊 Distribution Histograms", key=f"hist_btn_{key}"):
+        st.session_state[hist_key] = not st.session_state[hist_key]
+
+    if st.session_state[hist_key]:
+        with st.spinner("Loading distributions…"):
+            hist_df = load_histogram_data(key)
+        cols_info = HIST_COLS[key]
+        n = len(cols_info)
+        ncols = min(3, n)
+        nrows = (n + ncols - 1) // ncols
+        titles = [label for _, label in cols_info]
+        while len(titles) < nrows * ncols:
+            titles.append("")
+        specs = [[{"type": "xy"}] * ncols for _ in range(nrows)]
+        fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=titles, specs=specs)
+        for i, (col, _) in enumerate(cols_info):
+            row, c = i // ncols + 1, i % ncols + 1
+            fig.add_trace(go.Histogram(x=hist_df[col].dropna(), marker_color=db["color"],
+                                       showlegend=False), row=row, col=c)
+        fig.update_yaxes(showgrid=False)
+        fig.update_layout(
+            paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
+            template="plotly_dark",
+            margin=dict(l=0, r=0, t=40, b=0),
+            height=280 * nrows,
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     # ── Q&A section ───────────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
