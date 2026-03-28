@@ -167,6 +167,7 @@ def render_result_map(cfg, df, color):
         margin=dict(l=0, r=0, t=0, b=0),
         height=520,
         coloraxis_colorbar=dict(title=color_col or ""),
+        yaxis=dict(showgrid=False),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -624,7 +625,8 @@ if st.session_state.selected_db:
         ))
         fig.update_layout(title=chart_title,
                           xaxis_title="Date", yaxis_title=y_label,
-                          template="plotly_dark")
+                          template="plotly_dark",
+                          yaxis=dict(showgrid=False))
     else:  # taxi
         # 7-day rolling average
         df["rolling"] = df["value"].rolling(7, center=True).mean()
@@ -642,13 +644,15 @@ if st.session_state.selected_db:
         ))
         fig.update_layout(title=chart_title,
                           xaxis_title="Date", yaxis_title=y_label,
-                          template="plotly_dark", legend=dict(orientation="h"))
+                          template="plotly_dark", legend=dict(orientation="h"),
+                          yaxis=dict(showgrid=False))
 
     fig.update_layout(
         paper_bgcolor="#0f1117",
         plot_bgcolor="#0f1117",
         margin=dict(l=0, r=0, t=40, b=0),
         height=380,
+        yaxis=dict(showgrid=False),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -709,7 +713,8 @@ if st.session_state.selected_db:
                     fig = px.bar(df_r, x=df_r.columns[0], y=df_r.columns[1],
                                  template="plotly_dark", color_discrete_sequence=[db["color"]])
                     fig.update_layout(paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-                                      margin=dict(l=0,r=0,t=30,b=0), height=280)
+                                      margin=dict(l=0,r=0,t=30,b=0), height=280,
+                                      yaxis=dict(showgrid=False))
                     st.plotly_chart(fig, use_container_width=True)
 
     # Input row
@@ -781,7 +786,8 @@ if st.session_state.selected_db:
                     fig = px.bar(result_df, x=result_df.columns[0], y=result_df.columns[1],
                                  template="plotly_dark", color_discrete_sequence=[db["color"]])
                     fig.update_layout(paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-                                      margin=dict(l=0,r=0,t=30,b=0), height=280)
+                                      margin=dict(l=0,r=0,t=30,b=0), height=280,
+                                      yaxis=dict(showgrid=False))
                     st.plotly_chart(fig, use_container_width=True)
 
                 # Add successful answer to dynamic FAQ
