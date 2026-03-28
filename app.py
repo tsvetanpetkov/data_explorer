@@ -122,6 +122,52 @@ def load_zone_centroids():
         return None
 
 
+def render_result_chart(cfg, df, color):
+    """Render a chart from a chartconfig dict + result DataFrame."""
+    chart_type = cfg.get("type", "bar")
+    title = cfg.get("title", "")
+    layout_kwargs = dict(
+        paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
+        margin=dict(l=0, r=0, t=30, b=0), height=320,
+        template="plotly_dark",
+        yaxis=dict(showgrid=False),
+    )
+
+    if chart_type == "histogram":
+        x = cfg.get("x", df.columns[0])
+        fig = px.histogram(df, x=x, title=title, color_discrete_sequence=[color])
+    elif chart_type == "line":
+        x = cfg.get("x", df.columns[0])
+        y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+        y_cols = y if isinstance(y, list) else [y]
+        fig = px.line(df, x=x, y=y_cols, title=title, color_discrete_sequence=px.colors.qualitative.Bold)
+    elif chart_type == "pie":
+        names = cfg.get("names", df.columns[0])
+        values = cfg.get("values", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+        fig = px.pie(df, names=names, values=values, title=title,
+                     color_discrete_sequence=px.colors.qualitative.Bold)
+        layout_kwargs.pop("yaxis")
+    elif chart_type == "candlestick":
+        date_col  = cfg.get("x", "trade_date")
+        open_col  = cfg.get("open", "open")
+        high_col  = cfg.get("high", "high")
+        low_col   = cfg.get("low", "low")
+        close_col = cfg.get("close", "close")
+        fig = go.Figure(go.Candlestick(
+            x=df[date_col], open=df[open_col], high=df[high_col],
+            low=df[low_col], close=df[close_col],
+        ))
+        if title:
+            fig.update_layout(title=title)
+    else:  # bar (default)
+        x = cfg.get("x", df.columns[0])
+        y = cfg.get("y", df.columns[1] if len(df.columns) > 1 else df.columns[0])
+        fig = px.bar(df, x=x, y=y, title=title, color_discrete_sequence=[color])
+
+    fig.update_layout(**layout_kwargs)
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_result_map(cfg, df, color):
     """Render a plotly scatter map from a mapconfig dict + result DataFrame."""
     map_type = cfg.get("type", "scatter")
@@ -504,6 +550,15 @@ When the user asks a question, you MUST:
 3. After the fence, give a concise 1-3 sentence explanation of what the query does / what to expect.
 Keep queries efficient and add LIMIT 500 unless the user asks for everything.
 
+CHARTS: After your explanation, include a ```chartconfig ... ``` block with a JSON object describing how to visualise the result. Choose the most appropriate chart type:
+- "bar"          → {{\"type\":\"bar\",\"x\":\"col\",\"y\":\"col\",\"title\":\"...\"}}
+- "line"         → {{\"type\":\"line\",\"x\":\"col\",\"y\":\"col_or_list\",\"title\":\"...\"}}
+- "histogram"    → {{\"type\":\"histogram\",\"x\":\"col\",\"title\":\"...\"}}
+- "pie"          → {{\"type\":\"pie\",\"names\":\"col\",\"values\":\"col\",\"title\":\"...\"}}
+- "candlestick"  → {{\"type\":\"candlestick\",\"x\":\"date_col\",\"open\":\"open\",\"high\":\"high\",\"low\":\"low\",\"close\":\"close\",\"title\":\"...\"}}
+Guidelines: use candlestick for OHLC stock data; pie for distributions ≤10 categories; histogram for single numeric columns; line for time series; bar otherwise.
+Always include a chartconfig block unless the result is a single scalar value.
+
 MAPS: If the user asks for a map, or if the result contains geographic data, include a ```mapconfig ... ``` block after your explanation with a JSON object. Supported types:
 - "zone_scatter": for NYC taxi zone IDs → automatically joined to lat/lon centroids.
   Example: ```mapconfig
@@ -544,6 +599,14 @@ DATABASE SCHEMA:
             yield ("df", df)
         except Exception as e:
             yield ("error", str(e))
+
+    # Extract optional chart config block
+    chart_match = re.search(r"```chartconfig\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE)
+    if chart_match:
+        try:
+            yield ("chart_config", json.loads(chart_match.group(1).strip()))
+        except json.JSONDecodeError:
+            pass
 
     # Extract optional map config block
     map_match = re.search(r"```mapconfig\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE)
@@ -709,13 +772,10 @@ if st.session_state.selected_db:
                 st.dataframe(df_r, use_container_width=True, height=min(300, 40 + 35 * len(df_r)))
                 if turn.get("map_cfg"):
                     render_result_map(turn["map_cfg"], df_r, db["color"])
-                elif len(df_r.columns) == 2 and pd.api.types.is_numeric_dtype(df_r.iloc[:, 1]):
-                    fig = px.bar(df_r, x=df_r.columns[0], y=df_r.columns[1],
-                                 template="plotly_dark", color_discrete_sequence=[db["color"]])
-                    fig.update_layout(paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-                                      margin=dict(l=0,r=0,t=30,b=0), height=280,
-                                      yaxis=dict(showgrid=False))
-                    st.plotly_chart(fig, use_container_width=True)
+                if turn.get("chart_cfg"):
+                    render_result_chart(turn["chart_cfg"], df_r, db["color"])
+                elif not turn.get("map_cfg") and len(df_r.columns) == 2 and pd.api.types.is_numeric_dtype(df_r.iloc[:, 1]):
+                    render_result_chart({"type": "bar", "x": df_r.columns[0], "y": df_r.columns[1]}, df_r, db["color"])
 
     # Input row
     col_input, col_btn, col_clear = st.columns([8, 1, 1])
@@ -743,10 +803,12 @@ if st.session_state.selected_db:
             result_df = None
             error_msg = None
             map_cfg = None
+            chart_cfg = None
 
             def _clean(text):
-                """Strip sql and mapconfig fences from display text."""
+                """Strip sql, chartconfig, and mapconfig fences from display text."""
                 text = re.sub(r"```sql.*?```", "", text, flags=re.DOTALL)
+                text = re.sub(r"```chartconfig.*?```", "", text, flags=re.DOTALL)
                 text = re.sub(r"```mapconfig.*?```", "", text, flags=re.DOTALL)
                 return text.strip()
 
@@ -766,6 +828,8 @@ if st.session_state.selected_db:
                         st.markdown(f'<div class="sql-block">{final_sql}</div>', unsafe_allow_html=True)
                     elif event_type == "df":
                         result_df = content
+                    elif event_type == "chart_config":
+                        chart_cfg = content
                     elif event_type == "map_config":
                         map_cfg = content
                     elif event_type == "error":
@@ -782,13 +846,10 @@ if st.session_state.selected_db:
                              height=min(300, 40 + 35 * len(result_df)))
                 if map_cfg:
                     render_result_map(map_cfg, result_df, db["color"])
-                elif len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
-                    fig = px.bar(result_df, x=result_df.columns[0], y=result_df.columns[1],
-                                 template="plotly_dark", color_discrete_sequence=[db["color"]])
-                    fig.update_layout(paper_bgcolor="#0a0a0a", plot_bgcolor="#0a0a0a",
-                                      margin=dict(l=0,r=0,t=30,b=0), height=280,
-                                      yaxis=dict(showgrid=False))
-                    st.plotly_chart(fig, use_container_width=True)
+                if chart_cfg:
+                    render_result_chart(chart_cfg, result_df, db["color"])
+                elif not map_cfg and len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
+                    render_result_chart({"type": "bar", "x": result_df.columns[0], "y": result_df.columns[1]}, result_df, db["color"])
 
                 # Add successful answer to dynamic FAQ
                 parts = []
@@ -818,6 +879,7 @@ if st.session_state.selected_db:
                 "sql": final_sql,
                 "df": result_df,
                 "map_cfg": map_cfg,
+                "chart_cfg": chart_cfg,
             })
 
     # ── FAQ ───────────────────────────────────────────────────────────────────
