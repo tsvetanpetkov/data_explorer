@@ -357,6 +357,7 @@ HIST_COLS = {
         ("tip_amount",    "Tip Amount ($)"),
         ("total_amount",  "Total Amount ($)"),
         ("passenger_count", "Passenger Count"),
+        ("tolls_amount",  "Tolls Amount ($)"),
     ],
     "stocks": [
         ("open",   "Open Price"),
