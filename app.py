@@ -6,12 +6,30 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
-import anthropic
+from llama_cpp import Llama
 import json
 import re
+import os
 
 HOME = Path(__file__).parent
 FAQS_PATH = HOME / "dynamic_faqs.json"
+
+# Local, in-process LLM — no API key, no network call at query time.
+# First run downloads the quantized weights once (cached under ~/.cache/huggingface);
+# every query after that runs entirely on-device.
+MODEL_REPO = os.environ.get("DATA_EXPLORER_MODEL_REPO", "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")
+MODEL_FILE = os.environ.get("DATA_EXPLORER_MODEL_FILE", "*q4_k_m*.gguf")
+
+
+@st.cache_resource(show_spinner="Loading local LLM (first run downloads ~1GB, then fully offline)…")
+def get_llm():
+    return Llama.from_pretrained(
+        repo_id=MODEL_REPO,
+        filename=MODEL_FILE,
+        n_ctx=8192,
+        n_threads=os.cpu_count(),
+        verbose=False,
+    )
 
 
 def _load_persisted_faqs():
@@ -671,8 +689,8 @@ def run_sql(db_key, sql):
         return con.execute(sql).df()
 
 
-def ask_claude(db_key, question, api_key, history):
-    """Stream Claude's response. Yields (type, content) tuples:
+def ask_llm(db_key, question, history):
+    """Stream the local model's response. Yields (type, content) tuples:
        ('sql', sql_string) | ('text', chunk) | ('df', dataframe) | ('error', msg)
     """
     schema = get_schema_description(db_key)
@@ -706,23 +724,25 @@ Only include a mapconfig block when geographic display genuinely adds value.
 DATABASE SCHEMA:
 {schema}"""
 
-    messages = []
+    messages = [{"role": "system", "content": system}]
     for turn in history:
         messages.append({"role": turn["role"], "content": turn["content"]})
     messages.append({"role": "user", "content": question})
 
-    client = anthropic.Anthropic(api_key=api_key)
+    llm = get_llm()
     full_text = ""
 
-    with client.messages.stream(
-        model="claude-opus-4-6",
-        max_tokens=2048,
-        system=system,
+    stream = llm.create_chat_completion(
         messages=messages,
-    ) as stream:
-        for chunk in stream.text_stream:
-            full_text += chunk
-            yield ("text", chunk)
+        max_tokens=2048,
+        temperature=0.1,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk["choices"][0]["delta"].get("content")
+        if delta:
+            full_text += delta
+            yield ("text", delta)
 
     # Extract SQL block
     match = re.search(r"```sql\s*(.*?)```", full_text, re.DOTALL | re.IGNORECASE)
@@ -757,24 +777,14 @@ DATABASE SCHEMA:
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-# ── Sidebar: API key ──────────────────────────────────────────────────────────
-import os
-_env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+# ── Sidebar: local model info ───────────────────────────────────────────────────
 with st.sidebar:
-    if _env_key:
-        api_key_input = _env_key
-    else:
-        st.markdown("### 🔑 Claude API Key")
-        api_key_input = st.text_input(
-            "Anthropic API key",
-            type="password",
-            placeholder="sk-ant-...",
-            label_visibility="collapsed",
-        )
-        if not api_key_input:
-            st.warning("Enter key to enable Q&A")
+    st.markdown("### 🖥️ Local LLM")
+    st.markdown(f"Model: `{MODEL_REPO.split('/')[-1]}`")
+    st.caption("Runs in-process on this machine — no API key and no per-query network call. "
+               "The first question triggers a one-time model download.")
     st.markdown("---")
-    st.markdown("**Q&A** uses Claude to convert your question to SQL, runs it, and shows the results.")
+    st.markdown("**Q&A** uses the local model to convert your question to SQL, runs it, and shows the results.")
 
 st.markdown("## 📊 Data Explorer")
 st.markdown("<p style='color:#888880;margin-top:-12px'>Select a dataset to explore</p>", unsafe_allow_html=True)
@@ -963,94 +973,91 @@ if st.session_state.selected_db:
             st.rerun()
 
     if ask and question.strip():
-        if not api_key_input:
-            st.warning("⚠️ Open the sidebar (top-left ›) and enter your Anthropic API key.")
-        else:
-            st.markdown(f'<div class="msg-user">🧑 {question}</div>', unsafe_allow_html=True)
-            placeholder = st.empty()
-            streamed_text = ""
-            final_sql = None
-            result_df = None
-            error_msg = None
-            map_cfg = None
-            chart_cfgs = []
+        st.markdown(f'<div class="msg-user">🧑 {question}</div>', unsafe_allow_html=True)
+        placeholder = st.empty()
+        streamed_text = ""
+        final_sql = None
+        result_df = None
+        error_msg = None
+        map_cfg = None
+        chart_cfgs = []
 
-            def _clean(text):
-                """Strip sql, chartconfig, and mapconfig fences from display text."""
-                text = re.sub(r"```sql.*?```", "", text, flags=re.DOTALL)
-                text = re.sub(r"```chartconfig.*?```", "", text, flags=re.DOTALL)
-                text = re.sub(r"```mapconfig.*?```", "", text, flags=re.DOTALL)
-                return text.strip()
+        def _clean(text):
+            """Strip sql, chartconfig, and mapconfig fences from display text."""
+            text = re.sub(r"```sql.*?```", "", text, flags=re.DOTALL)
+            text = re.sub(r"```chartconfig.*?```", "", text, flags=re.DOTALL)
+            text = re.sub(r"```mapconfig.*?```", "", text, flags=re.DOTALL)
+            return text.strip()
 
-            with st.spinner("Thinking…"):
-                for event_type, content in ask_claude(
-                    key, question, api_key_input,
-                    st.session_state[history_key]
-                ):
-                    if event_type == "text":
-                        streamed_text += content
-                        placeholder.markdown(
-                            f'<div class="msg-assistant">🤖 {_clean(streamed_text)}</div>',
-                            unsafe_allow_html=True
-                        )
-                    elif event_type == "sql":
-                        final_sql = content
-                        st.markdown(f'<div class="sql-block">{final_sql}</div>', unsafe_allow_html=True)
-                    elif event_type == "df":
-                        result_df = content
-                    elif event_type == "chart_configs":
-                        chart_cfgs = content
-                    elif event_type == "map_config":
-                        map_cfg = content
-                    elif event_type == "error":
-                        error_msg = content
+        with st.spinner("Thinking…"):
+            for event_type, content in ask_llm(
+                key, question,
+                st.session_state[history_key]
+            ):
+                if event_type == "text":
+                    streamed_text += content
+                    placeholder.markdown(
+                        f'<div class="msg-assistant">🤖 {_clean(streamed_text)}</div>',
+                        unsafe_allow_html=True
+                    )
+                elif event_type == "sql":
+                    final_sql = content
+                    st.markdown(f'<div class="sql-block">{final_sql}</div>', unsafe_allow_html=True)
+                elif event_type == "df":
+                    result_df = content
+                elif event_type == "chart_configs":
+                    chart_cfgs = content
+                elif event_type == "map_config":
+                    map_cfg = content
+                elif event_type == "error":
+                    error_msg = content
 
-            display_text = _clean(streamed_text)
-            placeholder.markdown(
-                f'<div class="msg-assistant">🤖 {display_text}</div>',
-                unsafe_allow_html=True
+        display_text = _clean(streamed_text)
+        placeholder.markdown(
+            f'<div class="msg-assistant">🤖 {display_text}</div>',
+            unsafe_allow_html=True
+        )
+
+        if result_df is not None and len(result_df) > 0:
+            st.dataframe(result_df, use_container_width=True,
+                         height=min(300, 40 + 35 * len(result_df)))
+            if map_cfg:
+                render_result_map(map_cfg, result_df, db["color"])
+            if chart_cfgs:
+                render_charts(chart_cfgs, result_df, db["color"], f"chart_view_{key}_new")
+            elif not map_cfg and len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
+                render_result_chart({"type": "bar", "x": result_df.columns[0], "y": result_df.columns[1]}, result_df, db["color"])
+
+            # Add successful answer to dynamic FAQ
+            parts = []
+            if display_text:
+                parts.append(display_text)
+            # Append a plain-text summary of the top results
+            preview = result_df.head(5)
+            rows_txt = "; ".join(
+                " | ".join(f"{col}: {val}" for col, val in row.items())
+                for _, row in preview.iterrows()
             )
+            total = len(result_df)
+            parts.append(f"Top result{'s' if total > 1 else ''} ({total:,} row{'s' if total != 1 else ''} total): {rows_txt}")
+            st.session_state[dyn_faq_key].append({"q": question, "a": "  ".join(parts)})
+            persisted = _load_persisted_faqs()
+            persisted[key] = st.session_state[dyn_faq_key]
+            _save_persisted_faqs(persisted)
+        elif error_msg:
+            st.error(f"SQL error: {error_msg}")
 
-            if result_df is not None and len(result_df) > 0:
-                st.dataframe(result_df, use_container_width=True,
-                             height=min(300, 40 + 35 * len(result_df)))
-                if map_cfg:
-                    render_result_map(map_cfg, result_df, db["color"])
-                if chart_cfgs:
-                    render_charts(chart_cfgs, result_df, db["color"], f"chart_view_{key}_new")
-                elif not map_cfg and len(result_df.columns) == 2 and pd.api.types.is_numeric_dtype(result_df.iloc[:, 1]):
-                    render_result_chart({"type": "bar", "x": result_df.columns[0], "y": result_df.columns[1]}, result_df, db["color"])
-
-                # Add successful answer to dynamic FAQ
-                parts = []
-                if display_text:
-                    parts.append(display_text)
-                # Append a plain-text summary of the top results
-                preview = result_df.head(5)
-                rows_txt = "; ".join(
-                    " | ".join(f"{col}: {val}" for col, val in row.items())
-                    for _, row in preview.iterrows()
-                )
-                total = len(result_df)
-                parts.append(f"Top result{'s' if total > 1 else ''} ({total:,} row{'s' if total != 1 else ''} total): {rows_txt}")
-                st.session_state[dyn_faq_key].append({"q": question, "a": "  ".join(parts)})
-                persisted = _load_persisted_faqs()
-                persisted[key] = st.session_state[dyn_faq_key]
-                _save_persisted_faqs(persisted)
-            elif error_msg:
-                st.error(f"SQL error: {error_msg}")
-
-            # Save to history
-            st.session_state[history_key].append({"role": "user", "content": question})
-            st.session_state[history_key].append({
-                "role": "assistant",
-                "content": streamed_text,
-                "display": display_text,
-                "sql": final_sql,
-                "df": result_df,
-                "map_cfg": map_cfg,
-                "chart_cfgs": chart_cfgs,
-            })
+        # Save to history
+        st.session_state[history_key].append({"role": "user", "content": question})
+        st.session_state[history_key].append({
+            "role": "assistant",
+            "content": streamed_text,
+            "display": display_text,
+            "sql": final_sql,
+            "df": result_df,
+            "map_cfg": map_cfg,
+            "chart_cfgs": chart_cfgs,
+        })
 
     # ── FAQ ───────────────────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)

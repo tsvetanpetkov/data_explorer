@@ -2,5 +2,6 @@ streamlit==1.50.0
 duckdb==1.4.4
 pandas==2.3.3
 plotly==6.6.0
-anthropic==0.86.0
+llama-cpp-python==0.3.16
+huggingface-hub==0.35.3
 geopandas==1.0.1
